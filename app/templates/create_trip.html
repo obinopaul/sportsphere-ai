@@ -1,0 +1,43 @@
+<!-- app/templates/create_trip.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pocket Traveller - Plan a Trip</title>
+  <link rel="icon" href="/static/images/logo.png" type="image/png">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/static/css/satoshi.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Roboto&display=swap">
+  
+  <!-- Add required meta tags and title -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+
+  <!-- Google Maps API (for Places Autocomplete) -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyALiFcfr-DAiagr-SOihD4eEwHCiFSlBGs&libraries=places&callback=initAutocomplete" async defer></script>
+
+
+</head>
+<body>
+  <!-- Header -->
+  <header id="site-header"></header>
+  
+  <!-- Trip Planner Form -->
+  <main id="trip-planner" class="container"></main>
+
+  <!-- Google Maps API (for Places Autocomplete) -->
+  <script src="https://maps.googleapis.com/maps/api/js?key={{ GOOGLE_MAPS_API_KEY }}&libraries=places&callback=initAutocomplete" async defer></script>
+
+
+  <!-- Footer -->
+  <footer id="site-footer"></footer>
+
+  <!-- JavaScript Files -->
+  <script src="/static/js/header.js"></script>
+  <script src="/static/js/ui/dialog.js"></script>
+  <script src="/static/js/create_trip.js"></script>
+  <script src="/static/js/footer.js"></script>
+</body>
+</html>

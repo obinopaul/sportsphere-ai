@@ -1410,6 +1410,93 @@ get_standings_tool = StructuredTool(
 )
 
 
+
+###############################################################################
+# get_player_id_tool: Retrieve Player IDs by Name
+###############################################################################
+class GetPlayerIdInput(BaseModel):
+    player_name: str = Field(
+        ...,
+        description="The first *or* last name of the player to search for (e.g., 'Lionel' OR 'Messi').  Do NOT enter both first and last name.",
+    )
+
+    # @validator("player_name")
+    # def check_single_name(cls, value):
+    #     if " " in value.strip():
+    #         raise ValueError(
+    #             "Please enter only the first *or* last name, not both.  "
+    #             "The API treats the input as either a first name OR a last name."
+    #         )
+    #     if len(value.strip()) <3:
+    #         raise ValueError("The name must be at least 3 characters long.")
+
+    #     return value.strip()
+
+class GetPlayerIdTool:
+    """
+    Retrieves a list of players matching a given name, returning key identifying information
+    to help select the correct player ID.
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api-football-v1.p.rapidapi.com/v3"
+
+    def get_player_ids(self, player_name: str) -> Dict[str, Any]:
+        url = f"{self.base_url}/players/profiles"  # Use the /players endpoint
+        headers = {
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+            "x-rapidapi-key": self.api_key,
+        }
+        params = {
+            "search": player_name,
+        }
+
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get("response"):
+                return {"error": f"No players found matching '{player_name}'."}
+
+            player_list = []
+            for item in data["response"]:
+                player = item.get("player", {})
+                # Extract relevant identifying information
+                player_info = {
+                    "player_id": player.get("id"),
+                    "firstname": player.get("firstname"),
+                    "lastname": player.get("lastname"),
+                    "age": player.get("age"),
+                    "nationality": player.get("nationality"),
+                    "birth_date": player.get("birth", {}).get("date"),  # Include birth date
+                    "birth_place": player.get("birth", {}).get("place"), # Include place of birth
+                    "birth_country": player.get("birth", {}).get("country"), # Include country of birth
+                    "height": player.get("height"),
+                    "weight" : player.get("weight")
+                }
+                player_list.append(player_info)
+
+
+            return {"players": player_list}  # Return a list of player info dictionaries
+
+        except requests.exceptions.RequestException as e:
+            return {"error": f"Request failed: {e}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {e}"}
+
+
+get_player_id_tool = StructuredTool.from_function(
+    func=GetPlayerIdTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_ids,
+    name="get_player_id",
+    description=(
+        "Retrieve a list of player IDs and identifying information (name, age, nationality, birth date, birth place, height, weight) "
+        "for players matching a given name.  Use this to find the ID of a specific player."
+    ),
+    args_schema=GetPlayerIdInput,
+)
+
 ###############################################################################
 # GetPlayerProfileTool: Fetch a Player's Profile
 ###############################################################################
@@ -1463,6 +1550,377 @@ get_player_profile_tool = StructuredTool(
 )
 
 
+###############################################################################
+# get_player_statistics_tool: Retrieve Detailed Player Statistics
+###############################################################################
+
+class GetPlayerStatisticsInput(BaseModel):
+    player_id: int = Field(..., description="The ID of the player.")
+    seasons: List[int] = Field(
+        ...,
+        description="A list of seasons to get statistics for (4-digit years, e.g., [2021, 2022, 2023] or [2022] for a single season).",
+    )
+    league_name: Optional[str] = Field(
+        None,
+        description="Optional. The name of the league (e.g., 'Premier League').",
+    )
+
+    @validator("seasons", pre=True)
+    def convert_single_season_to_list(cls, value):
+        if isinstance(value, int):
+            return [value]  # Convert single integer to a list
+        return value
+
+    @validator("league_name")
+    def check_league_name(cls, value):
+        if value is not None and len(value.strip()) < 3:
+            raise ValueError("League name must be at least 3 characters long.")
+        return value
+
+
+class GetPlayerStatisticsTool:
+    """
+    Retrieves detailed player statistics, including advanced stats, for a given player ID.
+    Filters by a list of seasons and an optional league name.
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api-football-v1.p.rapidapi.com/v3"
+
+    def _get_league_id(self, league_name: str, season: int) -> Optional[int]:
+        """Helper function to get the league ID from the league name."""
+        url = f"{self.base_url}/leagues"
+        headers = {
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+            "x-rapidapi-key": self.api_key,
+        }
+        params = {"name": league_name, "season": season}  # Use season for accuracy, use 'name' instead of 'search'
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get("response"):
+                return None  # No league found
+
+            for league_data in data["response"]:
+                # Check for name match (case-insensitive)
+                if league_data["league"]["name"].lower() == league_name.lower():
+                    # Check if the specified season is available for this league
+                  for league_season in league_data["seasons"]:
+                    if league_season["year"] == season:
+                        return league_data["league"]["id"]
+            return None # Return after looping through
+
+        except requests.exceptions.RequestException:
+            return None
+        except Exception:
+            return None
+
+    def get_player_statistics(
+        self,
+        player_id: int,
+        seasons: List[int],
+        league_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/players"
+        headers = {
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+            "x-rapidapi-key": self.api_key,
+        }
+        all_stats = []
+
+        # Make API requests for each season
+        for current_season in seasons:
+            league_id = None  # Initialize league_id
+            if league_name:
+                league_id = self._get_league_id(league_name, current_season)
+                if league_id is None:
+                    all_stats.append({
+                        "error": f"Could not find league ID for '{league_name}' in season {current_season}."
+                    })
+                    continue  # Skip to the next season
+
+            params: Dict[str, Any] = {"id": player_id, "season": current_season}
+            if league_id:
+                params["league"] = league_id
+
+            try:
+                response = requests.get(url, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                if not data.get("response"):
+                    # No stats found for this particular season/league
+                    continue
+
+                # Extract and format relevant statistics
+                for entry in data["response"]:
+                    player_info = entry.get("player", {})
+                    for stats in entry.get("statistics", []):
+                        extracted_stats: Dict[str, Any] = {
+                            "player": {
+                                "id": player_info.get("id"),
+                                "name": player_info.get("name"),
+                                "photo": player_info.get("photo"),
+                            },
+                            "team": {
+                                "id": stats.get("team", {}).get("id"),
+                                "name": stats.get("team", {}).get("name"),
+                                "logo": stats.get("team", {}).get("logo"),
+                            },
+                            "league": {
+                                "id": stats.get("league", {}).get("id"),
+                                "name": stats.get("league", {}).get("name"),
+                                "season": stats.get("league", {}).get("season"),
+                                "country": stats.get("league", {}).get("country"),
+                                "flag": stats.get("league", {}).get("flag"),
+                            },
+                            "games": {
+                                "appearances": stats.get("games", {}).get("appearences"),
+                                "lineups": stats.get("games", {}).get("lineups"),
+                                "minutes": stats.get("games", {}).get("minutes"),
+                                "position": stats.get("games", {}).get("position"),
+                                "rating": stats.get("games", {}).get("rating"),
+                            },
+                            "substitutes": {
+                                "in": stats.get("substitutes", {}).get("in"),
+                                "out": stats.get("substitutes", {}).get("out"),
+                                "bench": stats.get("substitutes", {}).get("bench"),
+                            },
+                            "shots": {
+                                "total": stats.get("shots", {}).get("total"),
+                                "on": stats.get("shots", {}).get("on"),
+                            },
+                            "goals": {
+                                "total": stats.get("goals", {}).get("total"),
+                                "conceded": stats.get("goals", {}).get("conceded"),
+                                "assists": stats.get("goals", {}).get("assists"),
+                                "saves": stats.get("goals", {}).get("saves"),
+                            },
+                            "passes": {
+                                "total": stats.get("passes", {}).get("total"),
+                                "key": stats.get("passes", {}).get("key"),
+                                "accuracy": stats.get("passes", {}).get("accuracy"),
+                            },
+                            "tackles": {
+                                "total": stats.get("tackles", {}).get("total"),
+                                "blocks": stats.get("tackles", {}).get("blocks"),
+                                "interceptions": stats.get("tackles", {}).get("interceptions"),
+                            },
+                            "duels": {
+                                "total": stats.get("duels", {}).get("total"),
+                                "won": stats.get("duels", {}).get("won"),
+                            },
+                            "dribbles": {
+                                "attempts": stats.get("dribbles", {}).get("attempts"),
+                                "success": stats.get("dribbles", {}).get("success"),
+                            },
+                            "fouls": {
+                                "drawn": stats.get("fouls", {}).get("drawn"),
+                                "committed": stats.get("fouls", {}).get("committed"),
+                            },
+                            "cards": {
+                                "yellow": stats.get("cards", {}).get("yellow"),
+                                "red": stats.get("cards", {}).get("red"),
+                            },
+                            "penalty": {
+                                "won": stats.get("penalty", {}).get("won"),
+                                "committed": stats.get("penalty", {}).get("committed"),
+                                "scored": stats.get("penalty", {}).get("scored"),
+                                "missed": stats.get("penalty", {}).get("missed"),
+                                "saved": stats.get("penalty", {}).get("saved"),
+                            },
+                        }
+                        all_stats.append(extracted_stats)
+
+            except requests.exceptions.RequestException as e:
+                all_stats.append({"error": f"Request failed for season {current_season}: {e}"})
+            except Exception as e:
+                all_stats.append({"error": f"An unexpected error occurred for season {current_season}: {e}"})
+
+        if not all_stats:
+            return {
+                "error": f"No statistics found for player ID {player_id} for the specified seasons/league."
+            }
+
+        return {"player_statistics": all_stats}
+
+
+get_player_statistics_tool = StructuredTool.from_function(
+    func=GetPlayerStatisticsTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_statistics,
+    name="get_player_statistics",
+    description=(
+        "Retrieve detailed player statistics for a given player ID.  "
+        "Filter by a list of seasons and an optional league name.  Includes advanced stats."
+    ),
+    args_schema=GetPlayerStatisticsInput,
+)
+
+
+###############################################################################
+# get_player_statistics_tool_2: Retrieve Detailed Player Statistics
+###############################################################################
+
+class GetPlayerStatisticsInput_2(BaseModel):
+    player_id: int = Field(..., description="The ID of the player.")
+    seasons: List[int] = Field(
+        ...,
+        description="A list of seasons to get statistics for (4-digit years, e.g., [2021, 2022, 2023] or [2022] for a single season).",
+    )
+    league_id: Optional[int] = Field(
+        None,
+        description="Optional. The ID of the league.  Requires 'seasons' to be set.",
+    )
+
+    @validator("seasons", pre=True)
+    def convert_single_season_to_list(cls, value):
+        if isinstance(value, int):
+            return [value]  # Convert single integer to a list
+        return value
+
+
+class GetPlayerStatisticsTool_2:
+    """
+    Retrieves detailed player statistics, including advanced stats, for a given player ID.
+    Filters by a list of seasons and an optional league ID.
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api-football-v1.p.rapidapi.com/v3"
+
+    def get_player_statistics(
+        self,
+        player_id: int,
+        seasons: List[int],
+        league_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/players"
+        headers = {
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+            "x-rapidapi-key": self.api_key,
+        }
+        all_stats = []
+
+        # Make API requests for each season
+        for current_season in seasons:
+            params: Dict[str, Any] = {"id": player_id, "season": current_season}
+            if league_id:
+                params["league"] = league_id
+
+            try:
+                response = requests.get(url, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                if not data.get("response"):
+                    # No stats found for this particular season, continue to the next
+                    continue
+
+                # Extract and format relevant statistics for this season
+                for entry in data["response"]:
+                    player_info = entry.get("player", {})
+                    for stats in entry.get("statistics", []):
+                        extracted_stats: Dict[str, Any] = {
+                            "player": {
+                                "id": player_info.get("id"),
+                                "name": player_info.get("name"),
+                                "photo": player_info.get("photo"),
+                            },
+                            "team": {
+                                "id": stats.get("team", {}).get("id"),
+                                "name": stats.get("team", {}).get("name"),
+                                "logo": stats.get("team", {}).get("logo"),
+                            },
+                            "league": {
+                                "id": stats.get("league", {}).get("id"),
+                                "name": stats.get("league", {}).get("name"),
+                                "season": stats.get("league", {}).get("season"),
+                                "country": stats.get("league", {}).get("country"),
+                                "flag": stats.get("league", {}).get("flag")
+                            },
+                            "games": {
+                                "appearances": stats.get("games", {}).get("appearences"),
+                                "lineups": stats.get("games", {}).get("lineups"),
+                                "minutes": stats.get("games", {}).get("minutes"),
+                                "position": stats.get("games", {}).get("position"),
+                                "rating": stats.get("games", {}).get("rating"),
+                            },
+                            "substitutes": {
+                                "in": stats.get("substitutes", {}).get("in"),
+                                "out": stats.get("substitutes", {}).get("out"),
+                                "bench": stats.get("substitutes", {}).get("bench"),
+                            },
+                            "shots": {
+                                "total": stats.get("shots", {}).get("total"),
+                                "on": stats.get("shots", {}).get("on"),
+                            },
+                            "goals": {
+                                "total": stats.get("goals", {}).get("total"),
+                                "conceded": stats.get("goals", {}).get("conceded"),
+                                "assists": stats.get("goals", {}).get("assists"),
+                                "saves": stats.get("goals", {}).get("saves"),
+                            },
+                            "passes": {
+                                "total": stats.get("passes", {}).get("total"),
+                                "key": stats.get("passes", {}).get("key"),
+                                "accuracy": stats.get("passes", {}).get("accuracy"),
+                            },
+                            "tackles": {
+                                "total": stats.get("tackles", {}).get("total"),
+                                "blocks": stats.get("tackles", {}).get("blocks"),
+                                "interceptions": stats.get("tackles", {}).get("interceptions"),
+                            },
+                            "duels": {
+                                "total": stats.get("duels", {}).get("total"),
+                                "won": stats.get("duels", {}).get("won"),
+                            },
+                            "dribbles": {
+                                "attempts": stats.get("dribbles", {}).get("attempts"),
+                                "success": stats.get("dribbles", {}).get("success"),
+                            },
+                            "fouls": {
+                                "drawn": stats.get("fouls", {}).get("drawn"),
+                                "committed": stats.get("fouls", {}).get("committed"),
+                            },
+                            "cards": {
+                                "yellow": stats.get("cards", {}).get("yellow"),
+                                "red": stats.get("cards", {}).get("red"),
+                            },
+                            "penalty": {
+                                "won": stats.get("penalty", {}).get("won"),
+                                "committed": stats.get("penalty", {}).get("committed"),
+                                "scored": stats.get("penalty", {}).get("scored"),
+                                "missed": stats.get("penalty", {}).get("missed"),
+                                "saved": stats.get("penalty", {}).get("saved"),
+                            },
+                        }
+                        all_stats.append(extracted_stats)
+
+            except requests.exceptions.RequestException as e:
+                return {"error": f"Request failed for season {current_season}: {e}"}
+            except Exception as e:
+                return {"error": f"An unexpected error occurred for season {current_season}: {e}"}
+
+        if not all_stats:
+            return {
+                "error": f"No statistics found for player ID {player_id} for the specified seasons/league."
+            }
+
+        return {"player_statistics": all_stats}
+
+
+get_player_statistics_tool_2 = StructuredTool.from_function(
+    func=GetPlayerStatisticsTool_2(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_statistics,
+    name="get_player_statistics",
+    description=(
+        "Retrieve detailed player statistics for a given player ID.  "
+        "Filter by a list of seasons and an optional league ID.  Includes advanced stats."
+    ),
+    args_schema=GetPlayerStatisticsInput_2,
+)
 
 # -------------------------------------------------------------------
 #  GetTeamFixturesTool: Fetch a Team's Fixtures

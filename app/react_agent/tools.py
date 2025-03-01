@@ -10,11 +10,11 @@ from typing import Any, Callable, List, Optional, cast, Dict, Literal
 from typing_extensions import Annotated
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError
 from typing import List, Optional, Dict, Any
 from langchain.tools.base import StructuredTool
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import re
 from langchain.schema import HumanMessage, AIMessage
@@ -26,6 +26,7 @@ import requests
 import logging
 from dotenv import load_dotenv
 from langchain_community.tools.tavily_search import TavilySearchResults
+from nba_api.stats.endpoints import leaguegamefinder
 
 
 #---------------------------------------------------------------------
@@ -699,7 +700,7 @@ class NBAFetchScoreBoardTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-live_scoreboard_tool = StructuredTool(
+nba_live_scoreboard = StructuredTool(
     name="nba_live_scoreboard",
     description=(
         "Fetch today's NBA scoreboard (live or latest). "
@@ -747,7 +748,7 @@ class NBAFetchBoxScoreTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-live_boxscore_tool = StructuredTool(
+nba_live_boxscore = StructuredTool(
     name="nba_live_boxscore",
     description=(
         "Fetch the real-time (live) box score for a given NBA game ID. "
@@ -796,7 +797,7 @@ class NBAFetchPlayByPlayTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-live_playbyplay_tool = StructuredTool(
+nba_live_play_by_play = StructuredTool(
     name="nba_live_play_by_play",
     description=(
         "Retrieve the live play-by-play actions for a specific NBA game ID. "
@@ -845,7 +846,7 @@ class NBACommonPlayerInfoTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-common_player_info_tool = StructuredTool(
+nba_common_player_info = StructuredTool(
     name="nba_common_player_info",
     description=(
         "Retrieve basic information about a player (height, weight, birthdate, "
@@ -903,7 +904,7 @@ class NBAPlayerCareerStatsTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-player_career_stats_tool = StructuredTool(
+nba_player_career_stats = StructuredTool(
     name="nba_player_career_stats",
     description=(
         "Obtain an NBA player's career statistics (regular season, playoffs, etc.) "
@@ -956,7 +957,7 @@ class NBAPlayerSearchTool:
             return [{"error": str(e)}]
 
 # ========== 3) Create the LangChain StructuredTool ==========
-search_players_by_name_tool = StructuredTool(
+nba_search_players = StructuredTool(
     name="nba_search_players",
     description=(
         "Search NBA players by partial or full name. "
@@ -1010,7 +1011,7 @@ class NBATeamSearchTool:
             return [{"error": str(e)}]
 
 # ========== 3) Create the LangChain StructuredTool ==========
-search_teams_by_name_tool = StructuredTool(
+nba_search_teams = StructuredTool(
     name="nba_search_teams",
     description=(
         "Search NBA teams by partial or full name. "
@@ -1048,7 +1049,7 @@ class NBAListActivePlayersTool:
             return [{"error": str(e)}]
 
 # ========== 3) Create the LangChain StructuredTool ==========
-list_active_players_tool = StructuredTool(
+nba_list_active_players = StructuredTool(
     name="nba_list_active_players",
     description=(
         "Return a list of all currently active NBA players with their IDs and names. "
@@ -1100,7 +1101,7 @@ class NBATodayGamesTool:
             return {"error": str(e)}
 
 # ========== 3) Create the LangChain StructuredTool ==========
-list_todays_games_tool = StructuredTool(
+nba_list_todays_games = StructuredTool(
     name="nba_list_todays_games",
     description=(
         "Returns scoreboard data from stats.nba.com for a given date (YYYY-MM-DD), "
@@ -1181,7 +1182,7 @@ class TeamGameLogsTool:
             return [{"error": str(e)}]
 
 # 3) Create the LangChain StructuredTool
-team_game_logs_tool = StructuredTool(
+nba_team_game_logs = StructuredTool(
     name="nba_team_game_logs",
     description=(
         "Fetch a list of all games (including game IDs, date, matchup, result) "
@@ -1268,7 +1269,7 @@ class TeamGameLogsByNameTool:
             return [{"error": str(e)}]
 
 # 3) Create the LangChain StructuredTool
-team_game_logs_by_name_tool = StructuredTool(
+nba_team_game_logs_by_name = StructuredTool(
     name="nba_team_game_logs_by_name",
     description=(
         "Fetch a team's game logs (and thus game_ids) by providing the team name, "
@@ -1279,6 +1280,82 @@ team_game_logs_by_name_tool = StructuredTool(
     args_schema=TeamGameLogsByNameInput
 )
 
+# ---------------------------------------------------------------- Here------------------------------------------
+# --------------------------------------------------
+# 12) nba_fetch_game_results: Fetch Game Results for a Team
+# --------------------------------------------------
+# ========== 1) Define Input Schema ==========
+class GameResultsInput(BaseModel):
+    """
+    Schema for fetching game results for a given team and date range.
+    """
+    team_id: str = Field(
+        ...,
+        description="A valid NBA team ID (e.g., '1610612740')."
+    )
+    dates: List[str] = Field(
+        ...,
+        description="A list of one or more dates in the format 'YYYY-MM-DD' (e.g., ['2023-01-01', '2023-01-02']).",
+        min_items=1
+    )
+
+# ========== 2) Define the Tool Class ==========
+class NBAFetchGameResultsTool:
+    """
+    Fetches game results for a given team and date range.
+    """
+    def __init__(self):
+        pass
+
+    def run(self, team_id: str, dates: List[str]) -> List[Dict[str, Any]]:
+        """
+        Return the game results as a list of dictionaries.
+        """
+        try:
+            # Convert dates to datetime objects
+            date_objects = [datetime.strptime(date, '%Y-%m-%d') for date in dates]
+
+            # Find games for the given team and date range
+            gamefinder = leaguegamefinder.LeagueGameFinder(
+                team_id_nullable=team_id,
+                season_type_nullable=SeasonType.regular,
+                date_from_nullable=min(date_objects).strftime('%m/%d/%Y'),
+                date_to_nullable=max(date_objects).strftime('%m/%d/%Y')
+            )
+
+            games = gamefinder.get_data_frames()[0]
+
+            # Filter games by the given dates
+            games['GAME_DATE'] = pd.to_datetime(games['GAME_DATE'])
+            # 1. Find the start and end dates
+            start_date = min(date_objects)  # The earliest date
+            end_date = max(date_objects)    # The latest date
+
+            # 2. Generate the list of dates
+            all_dates = []
+            current_date = start_date
+            while current_date <= end_date:
+                all_dates.append(current_date)
+                current_date += timedelta(days=1)  # Increment by one day
+
+            # 3.  Correctly create a list of dates to filter on
+            games = games[games['GAME_DATE'].dt.date.isin([d.date() for d in all_dates])]
+
+            # Return game results as a list of dictionaries
+            return games.to_dict('records')
+        except Exception as e:
+            return {"error": str(e)}
+
+# ========== 3) Create the LangChain StructuredTool ==========
+nba_fetch_game_results = StructuredTool(
+    name="nba_fetch_game_results",
+    description=(
+        "Fetch game results for a given NBA team ID and date range. "
+        "Provides game stats and results."
+    ),
+    func=NBAFetchGameResultsTool().run,
+    args_schema=GameResultsInput
+)
 
 
 # ---------------------------------------------------- SOCCER ------------------------------------------------------------
@@ -1333,7 +1410,7 @@ class GetLeagueIdByNameTool:
             return {"error": str(e)}
 
 # Define the tool to retrieve the league ID
-get_league_id_by_name_tool = StructuredTool(
+get_league_id_by_name = StructuredTool(
     name="get_league_id_by_name",
     description="Retrieve the league ID for a given league name (e.g. 'Premier League', 'La Liga').",
     func=GetLeagueIdByNameTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_league_id,
@@ -1350,7 +1427,7 @@ class GetStandingsToolInput(BaseModel):
     Input schema for retrieving league/team standings.
     'season' is required by the API. 'league' or 'team' can be used.
     """
-    league: Optional[int] = Field(
+    league_id: Optional[int] = Field(
         default=None,
         description="League ID to retrieve standings for."
     )
@@ -1376,7 +1453,7 @@ class GetStandingsTool:
 
     def get_standings(
         self,
-        league: Optional[int],
+        league_id: Optional[int],
         season: int,
         team: Optional[int]
     ) -> Dict[str, Any]:
@@ -1387,8 +1464,8 @@ class GetStandingsTool:
         }
         params = {"season": season}
 
-        if league is not None:
-            params["league"] = league
+        if league_id is not None:
+            params["league"] = league_id
         if team is not None:
             params["team"] = team
 
@@ -1399,7 +1476,7 @@ class GetStandingsTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_standings_tool = StructuredTool(
+get_standings = StructuredTool(
     name="get_standings",
     description=(
         "Use this tool to retrieve the standings table of a league and season, "
@@ -1487,7 +1564,7 @@ class GetPlayerIdTool:
             return {"error": f"An unexpected error occurred: {e}"}
 
 
-get_player_id_tool = StructuredTool.from_function(
+get_player_id = StructuredTool.from_function(
     func=GetPlayerIdTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_ids,
     name="get_player_id",
     description=(
@@ -1539,7 +1616,7 @@ class GetPlayerProfileTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_player_profile_tool = StructuredTool(
+get_player_profile = StructuredTool(
     name="get_player_profile",
     description=(
         "Use this tool to retrieve a single player's profile info by their last name. "
@@ -1565,13 +1642,13 @@ class GetPlayerStatisticsInput(BaseModel):
         description="Optional. The name of the league (e.g., 'Premier League').",
     )
 
-    @validator("seasons", pre=True)
+    @field_validator("seasons", mode='before')
     def convert_single_season_to_list(cls, value):
         if isinstance(value, int):
             return [value]  # Convert single integer to a list
         return value
 
-    @validator("league_name")
+    @field_validator("league_name")
     def check_league_name(cls, value):
         if value is not None and len(value.strip()) < 3:
             raise ValueError("League name must be at least 3 characters long.")
@@ -1748,7 +1825,7 @@ class GetPlayerStatisticsTool:
         return {"player_statistics": all_stats}
 
 
-get_player_statistics_tool = StructuredTool.from_function(
+get_player_statistics = StructuredTool.from_function(
     func=GetPlayerStatisticsTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_statistics,
     name="get_player_statistics",
     description=(
@@ -1774,7 +1851,7 @@ class GetPlayerStatisticsInput_2(BaseModel):
         description="Optional. The ID of the league.  Requires 'seasons' to be set.",
     )
 
-    @validator("seasons", pre=True)
+    @field_validator("seasons", mode='before')
     def convert_single_season_to_list(cls, value):
         if isinstance(value, int):
             return [value]  # Convert single integer to a list
@@ -1912,9 +1989,9 @@ class GetPlayerStatisticsTool_2:
         return {"player_statistics": all_stats}
 
 
-get_player_statistics_tool_2 = StructuredTool.from_function(
+get_player_statistics_2 = StructuredTool.from_function(
     func=GetPlayerStatisticsTool_2(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_player_statistics,
-    name="get_player_statistics",
+    name="get_player_statistics_2",
     description=(
         "Retrieve detailed player statistics for a given player ID.  "
         "Filter by a list of seasons and an optional league ID.  Includes advanced stats."
@@ -1996,7 +2073,7 @@ class GetTeamFixturesTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_team_fixtures_tool = StructuredTool(
+get_team_fixtures = StructuredTool(
     name="get_team_fixtures",
     description=(
         "Given a team name, returns either the last N or the next N fixtures for that team. "
@@ -2044,7 +2121,7 @@ class GetFixtureStatisticsTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_fixture_statistics_tool = StructuredTool(
+get_fixture_statistics = StructuredTool(
     name="get_fixture_statistics",
     description=(
         "Use this tool to retrieve box-score style statistics for a given fixture. "
@@ -2113,7 +2190,7 @@ class GetTeamFixturesByDateRangeTool:
         return resp_fixtures.json()
 
 
-get_team_fixtures_by_date_range_tool = StructuredTool(
+get_team_fixtures_by_date_range = StructuredTool(
     name="get_team_fixtures_by_date_range",
     description=(
         "Retrieve all fixtures for a given team within a date range. "
@@ -2158,7 +2235,7 @@ class GetFixtureEventsTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_fixture_events_tool = StructuredTool(
+get_fixture_events = StructuredTool(
     name="get_fixture_events",
     description=(
         "Retrieve all in-game events for a given fixture ID (e.g. goals, cards, subs). "
@@ -2175,7 +2252,7 @@ get_fixture_events_tool = StructuredTool(
 class GetMultipleFixturesStatsInput(BaseModel):
     fixture_ids: list[int] = Field(
         ...,
-        description="A list of numeric fixture IDs to get stats for, e.g. [215662, 215663]."
+        description="A list of numeric fixture IDs to get stats for, e.g. [215662, 215663] or [215663] for one fixture IDs."
     )
 
 class GetMultipleFixturesStatsTool:
@@ -2208,7 +2285,7 @@ class GetMultipleFixturesStatsTool:
 
         return {"fixtures_statistics": combined_results}
 
-get_multiple_fixtures_stats_tool = StructuredTool(
+get_multiple_fixtures_stats = StructuredTool(
     name="get_multiple_fixtures_stats",
     description=(
         "Retrieve stats (shots, possession, etc.) for multiple fixtures at once. "
@@ -2285,7 +2362,7 @@ class GetLeagueScheduleByDateTool:
             return {"error": str(e)}
 
 # Define the tool
-get_league_schedule_by_date_tool = StructuredTool(
+get_league_schedule_by_date = StructuredTool(
     name="get_league_schedule_by_date",
     description=(
         "Retrieve the schedule (fixtures) for a given league on a specified date. "
@@ -2366,7 +2443,7 @@ class GetLiveMatchForTeamTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_live_match_for_team_tool = StructuredTool(
+get_live_match_for_team = StructuredTool(
     name="get_live_match_for_team",
     description=(
         "Check if a given team is currently playing live. Input the team name. "
@@ -2446,7 +2523,7 @@ class GetLiveStatsForTeamTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_live_stats_for_team_tool = StructuredTool(
+get_live_stats_for_team = StructuredTool(
     name="get_live_stats_for_team",
     description=(
         "Retrieve live in-game stats (shots on goal, possession, etc.) for a team currently in a match. "
@@ -2526,7 +2603,7 @@ class GetLiveMatchTimelineTool:
         except Exception as e:
             return {"error": str(e)}
 
-get_live_match_timeline_tool = StructuredTool(
+get_live_match_timeline = StructuredTool(
     name="get_live_match_timeline",
     description=(
         "Retrieve the real-time timeline of a currently live match for a given team. "
@@ -2562,7 +2639,7 @@ class GetLeagueInfoTool:
         return data
 
 # Define the tool
-get_league_info_tool = StructuredTool(
+get_league_info = StructuredTool(
     name="get_league_info",
     description="Retrieve information about a specific football league (teams, season, fixtures, etc.)",
     func=GetLeagueInfoTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_league_info,
@@ -2596,7 +2673,7 @@ class GetTeamInfoTool:
 
 
 # Define the tool
-get_team_info_tool = StructuredTool(
+get_team_info = StructuredTool(
     name="get_team_info",
     description="Retrieve basic information about a specific football team (players, history, etc.)",
     func=GetTeamInfoTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_team_info,

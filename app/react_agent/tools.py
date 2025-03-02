@@ -17,6 +17,7 @@ import os
 from datetime import datetime, timedelta
 
 import re
+import pandas as pd 
 from langchain.schema import HumanMessage, AIMessage
 from langchain_core.messages import AnyMessage, HumanMessage
 from langchain.chains import create_retrieval_chain
@@ -27,6 +28,11 @@ import logging
 from dotenv import load_dotenv
 from langchain_community.tools.tavily_search import TavilySearchResults
 from nba_api.stats.endpoints import leaguegamefinder
+from nba_api.stats.endpoints import leaguestandingsv3
+from nba_api.stats.library.parameters import SeasonTypeAllStar, SeasonYear, Season
+from nba_api.stats.endpoints import teamyearbyyearstats
+from nba_api.stats.static import teams
+
 
 
 #---------------------------------------------------------------------
@@ -1355,6 +1361,323 @@ nba_fetch_game_results = StructuredTool(
     ),
     func=NBAFetchGameResultsTool().run,
     args_schema=GameResultsInput
+)
+
+
+# -------------------------------------------------------------------------
+# nba_team_standings: Retrieve NBA Team Standings
+# -------------------------------------------------------------------------
+class LeagueStandingsInput(BaseModel):
+    season: str = Field(
+        default=SeasonYear.default,
+        description="The NBA season (e.g., '2023-24'). Defaults to the current season."
+    )
+    season_type: str = Field(
+        default="Regular Season",
+        description="The season type (e.g., 'Regular Season', 'Playoffs', 'Pre Season', 'All Star'). Defaults to 'Regular Season'."
+    )
+
+# ========== 2) Define the Tool Class ==========
+class NBATeamStandingsTool:
+    """
+    Fetches NBA team standings from stats.nba.com.
+    """
+    def __init__(self):
+        pass
+
+    def run(self, season: str = SeasonYear.default, season_type: str = "Regular Season") -> List[Dict[str, Any]]:
+        """
+        Returns the NBA team standings as a list of dictionaries.
+        """
+        try:
+            # Fetch standings data
+            standings = leaguestandingsv3.LeagueStandingsV3(
+                season=season,
+                season_type=season_type
+            )
+            standings_data = standings.get_data_frames()[0]
+
+            # Convert the DataFrame to a list of dictionaries
+            return standings_data.to_dict('records')
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+# ========== 3) Create the LangChain StructuredTool ==========
+nba_team_standings = StructuredTool(
+    name="nba_team_standings",
+    description=(
+        "Fetch the NBA team standings for a given season and season type. "
+        "Returns a list of teams with their standings and basic stats."
+    ),
+    func=NBATeamStandingsTool().run,
+    args_schema=LeagueStandingsInput # Use the defined input schema
+)
+
+
+# -------------------------------------------------------------------------
+# nba_team_stats_by_name: Retrieve NBA Team Stats by Team Name
+# -------------------------------------------------------------------------
+class TeamStatsInput(BaseModel):
+    team_name: str = Field(
+        ...,
+        description="The NBA team name (e.g., 'Cleveland Cavaliers')."
+    )
+    season_type: str = Field(
+        default="Regular Season",
+        description="The season type (e.g., 'Regular Season', 'Playoffs', 'Pre Season', 'All Star'). Defaults to 'Regular Season'."
+    )
+    per_mode: str = Field(
+        default="PerGame",
+        description="Options are Totals, PerGame, Per48, Per40, PerMinute, PerPossession, MinutesPer, Rank"
+    )
+
+    @field_validator("team_name")
+    def validate_team_name(cls, value):
+        # Basic validation: check if team name exists
+        found_teams = teams.find_teams_by_full_name(value)
+        if not found_teams:
+            raise ValueError(f"No NBA team found with the name '{value}'.")
+        return value
+
+# ========== 2) Define the Tool Class ==========
+class NBATeamStatsByNameTool:
+    """
+    Fetches NBA team statistics from stats.nba.com using the team name.
+    """
+    def __init__(self):
+        pass
+
+    def run(self, team_name: str, season_type: str = "Regular Season", per_mode: str = "PerGame") -> List[Dict[str, Any]]:  # Corrected: Use string defaults
+        """
+        Returns the NBA team statistics as a list of dictionaries.
+        """
+        try:
+            # 1. Find the team's ID based on the name
+            found_teams = teams.find_teams_by_full_name(team_name)
+            if not found_teams:
+                return [{"error": f"No NBA team found with the name '{team_name}'."}]
+
+            # Handle multiple matches (though unlikely with full names). Take the first.
+            team_id = found_teams[0]['id']
+
+            # 2. Fetch team stats data using the team ID
+            # Corrected: Pass parameters individually, not as a dictionary
+            team_stats = teamyearbyyearstats.TeamYearByYearStats(
+                team_id=team_id,
+                per_mode_simple=per_mode,
+                season_type_all_star=season_type,
+            )
+
+
+            team_stats_data = team_stats.get_data_frames()[0]
+
+            # 3. Check if the DataFrame is empty
+            if team_stats_data.empty:
+                return [{"error": f"No stats found for {team_name},  season_type {season_type}."}]
+
+            # 4. Convert the DataFrame to a list of dictionaries
+            return team_stats_data.to_dict('records')
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+
+# ========== 3) Create the LangChain StructuredTool ==========
+nba_team_stats_by_name = StructuredTool(
+    name="nba_team_stats_by_name",
+    description=(
+        "Fetch the NBA team statistics for a given team name, season type, and per mode."
+        " Returns a list of statistics for that team."
+    ),
+    func=NBATeamStatsByNameTool().run,
+    args_schema=TeamStatsInput  # Use the defined input schema
+)
+
+
+# -------------------------------------------------------------------------
+# nba_all_teams_stats: Retrieve NBA Team Stats for All Teams
+# -------------------------------------------------------------------------
+from nba_api.stats.endpoints import leaguestandingsv3
+
+class AllTeamsStatsInput(BaseModel):
+    years: List[str] = Field(
+        default=["2023"],
+        description="A list of NBA season years (e.g., ['2022', '2023']). Defaults to the current season."
+    )
+    season_type: str = Field(
+        default="Regular Season",
+        description="The season type (e.g., 'Regular Season', 'Playoffs', 'Pre Season', 'All Star'). Defaults to 'Regular Season'."
+    )
+
+    @field_validator("years")
+    def validate_years(cls, value):
+        for year in value:
+            if not year.isdigit() or len(year) != 4:
+                raise ValueError("Each year must be a 4-digit string (e.g., '2023')")
+        return value
+
+# ========== 2) Define the Tool Class ==========
+class NBAAllTeamsStatsTool:
+    """
+    Fetches NBA statistics for all teams for multiple seasons from stats.nba.com.
+    """
+    def __init__(self):
+        pass
+
+    def run(self, years: List[str] = ["2023"], season_type: str = "Regular Season") -> List[Dict[str, Any]]:
+        """
+        Returns the NBA team statistics as a list of dictionaries, one for each season.
+        """
+        all_seasons_stats = []
+        try:
+            for year in years:
+                # Fetch team stats data using the team ID
+                team_stats = leaguestandingsv3.LeagueStandingsV3(
+                    season=year,  # Pass the year
+                    season_type=season_type,
+                    league_id='00',  # NBA league ID
+                )
+
+                team_stats_data = team_stats.get_data_frames()[0]
+
+                # Check if the DataFrame is empty
+                if team_stats_data.empty:
+                    all_seasons_stats.append({"error": f"No stats found for season {year}, season_type {season_type}."})
+                    continue  # Skip to the next year
+
+                # Convert relevant columns and handle potential errors
+                for col in ['PlayoffRank', 'ConferenceRank', 'DivisionRank', 'WINS', 'LOSSES', 'ConferenceGamesBack', 'DivisionGamesBack']:
+                    if col in team_stats_data.columns:
+                        try:
+                            team_stats_data[col] = pd.to_numeric(team_stats_data[col], errors='coerce')
+                        except (ValueError, TypeError):
+                            pass
+
+                # Add a 'Season' column to distinguish the results
+                team_stats_data['Season'] = year
+                all_seasons_stats.extend(team_stats_data.to_dict('records'))
+
+            return all_seasons_stats
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+
+
+# ========== 3) Create the LangChain StructuredTool ==========
+nba_all_teams_stats = StructuredTool(
+    name="nba_all_teams_stats",
+    description=(
+        "Fetch the NBA team statistics for all teams for a given list of season years and a season type."
+        " Returns a list of statistics for all teams for each season."
+    ),
+    func=NBAAllTeamsStatsTool().run,
+    args_schema=AllTeamsStatsInput  # Use the defined input schema
+)
+
+# -------------------------------------------------------------------------
+# nba_player_game_logs: Retrieve NBA Player Game Logs and stats
+# -------------------------------------------------------------------------
+# ========== 1) Define Input Schema ==========
+class PlayerGameLogsInput(BaseModel):
+    """
+    Input schema for retrieving a player's game logs within a specified date range.
+    """
+    player_id: str = Field(
+        ...,
+        description="NBA player ID (e.g., '2544' for LeBron James)."
+    )
+    date_range: List[str] = Field(
+        ...,
+        description="A list of two dates representing the start and end of the range, formatted as 'YYYY-MM-DD' (e.g., ['2022-12-01', '2022-12-31']).",
+        min_items=2,
+        max_items=2
+    )
+    season_type: str = Field(
+        default="Regular Season",
+        description="Season type. One of 'Regular Season', 'Playoffs', 'Pre Season', 'All Star'."
+    )
+
+    @field_validator('date_range')
+    def validate_date_range(cls, v):
+        try:
+            start_date = datetime.strptime(v[0], '%Y-%m-%d')
+            end_date = datetime.strptime(v[1], '%Y-%m-%d')
+            if start_date > end_date:
+                raise ValueError("Start date must be before end date.")
+        except ValueError:
+            raise ValueError("Invalid date format. Use 'YYYY-MM-DD'.")
+        return v
+
+
+# ========== 2) Define the Tool Class ==========
+class NBAPlayerGameLogsTool:
+    """
+    Pull game logs for an NBA player from stats.nba.com for each date within a specified date range.
+    """
+    def __init__(self):
+        pass
+
+    def run(self, player_id: str, date_range: List[str], season_type: str = "Regular Season") -> List[Dict[str, Any]]:
+        """
+        Returns a list of dictionaries, each representing a game log within the specified date range.
+        If no game was played on a particular date, that date is skipped in the output.
+
+        Args:
+            player_id (str): The ID of the player to retrieve game logs for.
+            date_range (List[str]): A list of two dates [start_date, end_date] in YYYY-MM-DD format.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, each representing a game log, or an error message.
+        """
+        try:
+            start_date_str, end_date_str = date_range
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+
+            # Find games for the given player and date range
+            gamefinder = leaguegamefinder.LeagueGameFinder(
+                player_id_nullable=player_id,
+                season_type_nullable=season_type,
+                date_from_nullable=start_date.strftime('%m/%d/%Y'),
+                date_to_nullable=end_date.strftime('%m/%d/%Y')
+            )
+
+            games = gamefinder.get_data_frames()[0]
+
+            # Convert GAME_DATE to datetime objects for comparison
+            games['GAME_DATE'] = pd.to_datetime(games['GAME_DATE'])
+
+            # Generate all dates in the range
+            all_dates = []
+            current_date = start_date
+            while current_date <= end_date:
+                all_dates.append(current_date)
+                current_date += timedelta(days=1)
+            
+            # Filter games by the generated dates
+            games = games[games['GAME_DATE'].dt.date.isin([d.date() for d in all_dates])]
+
+
+            # Return game results as a list of dictionaries
+            return games.to_dict('records')
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+# ========== 3) Create the LangChain StructuredTool ==========
+from langchain.tools import StructuredTool
+
+nba_player_game_logs = StructuredTool(
+    name="nba_player_game_logs",
+    description=(
+        "Obtain an NBA player's game statistics for dates within a specified date range "
+        "from the stats.nba.com endpoints. Requires a valid player_id and a date_range "
+        "as a list: ['YYYY-MM-DD', 'YYYY-MM-DD']. Returns game stats for each date where a game was played."
+    ),
+    func=NBAPlayerGameLogsTool().run,
+    args_schema=PlayerGameLogsInput
 )
 
 

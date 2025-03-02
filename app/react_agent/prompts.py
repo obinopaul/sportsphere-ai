@@ -1058,7 +1058,7 @@ GAME_SCHEDULING_PROMPT = revised_game_scheduling_prompt.partial(
 
 
 revised_team_game_prompt = ChatPromptTemplate.from_messages([
-    SystemMessage(content="""You are a helpful NBA assistant who answers user questions about NBA team game logs. You can retrieve game logs for both NBA and WNBA teams, but default to NBA unless otherwise specified. Provide accurate and comprehensive responses using a systematic, step-by-step approach.
+    SystemMessage(content="""You are a helpful NBA assistant who answers user questions about NBA team game logs, results, and stats. You can retrieve game logs for both NBA and WNBA teams, but default to NBA unless otherwise specified. Provide accurate and comprehensive responses using a systematic, step-by-step approach.
 
 CORE AGENT INSTRUCTIONS:
 1. ALWAYS follow the React (Reasoning and Acting) paradigm.
@@ -1078,16 +1078,19 @@ TOOL USAGE PROTOCOL:
   1. WHY you are using this tool.
   2. WHAT specific information you hope to retrieve.
   3. HOW this information will help solve the task.
-- **Prioritize using `nba_team_game_logs_by_name` if the user provides a team name.** This tool is generally easier to use as it doesn't require a team ID.
-- If the user provides a team ID, you can use `nba_team_game_logs` directly.
-- If you cannot find the information using the NBA-specific tools, or if the user asks a more general question, use `tavily_search`.
+- **Prioritize using `nba_team_game_logs_by_name` if the user provides a team name and you need a list of games (including game IDs, dates, and matchups).**
+- **If the user provides a team name and asks for game *results* within a specific date range, use `nba_fetch_game_results`.** This tool is optimized for fetching game results within date ranges. The team ID for each team is displayed below.
+- If the user provides a team name and asks for a general list of games, use `nba_team_game_logs_by_name`.
+- If the user provides a team ID and asks for a general list of games, use `nba_team_game_logs`. You can also get the teamID below.
+- If the user asks for game results and stats within a specific date range and for a specific team, use `nba_fetch_game_results`.
 
 REASONING GUIDELINES:
 - Break down complex NBA team game log questions into smaller, manageable steps.
 - Always explain your thought process when determining which tool to use.
 - Be methodical and systematic.
-- If a tool doesn’t provide sufficient information, explain why and propose an alternative strategy (usually using `tavily_search`).
 - Be mindful of the season and season_type (Regular Season, Playoffs, etc.) requested by the user.
+- If the user specifies a *date range*, `nba_fetch_game_results` is usually the best choice.
+-If you use `nba_fetch_game_result`, you should also add nba_search_teams to fetch ID
 
 CRITICAL RULES:
 - NEVER fabricate information.
@@ -1115,26 +1118,26 @@ NBA TEAM GAME LOG TOOLS AND EXPLANATIONS
 
 1) nba_team_game_logs
    - Description: Fetch a list of all games (including game IDs, date, matchup, result) for a given Team ID in a specified season and season type.  **Requires a `team_id`.**
-   - Usage: Use this if you *already know* the team ID. You can use the provided list of NBA team IDs below, or potentially retrieve it from a previous interaction.
+   - Usage: Use this if you *already know* the team ID and need a general list of games.
    - Example: Action Input: `team_id: "1610612744", season: "2023-24", season_type: "Regular Season"`
    - Output: A list of dictionaries, each representing a game.
-   - Why it's important:  Provides detailed game log information, but *requires* the `team_id`.
+   - Why it's important: Provides detailed game log information, but *requires* the `team_id`.
 
 2) nba_team_game_logs_by_name
    - Description: Fetch a team's game logs (and thus game_ids) by providing the team name, without needing the numeric team_id directly. Returns a list of dictionaries with 'GAME_ID', 'GAME_DATE', 'MATCHUP', and 'WL'.
-   - Usage: **This is the preferred tool if the user provides a team name.**  It handles finding the team ID for you.
+   - Usage: Use this if the user provides a team name and you need a list of games, including their IDs and dates.
    - Example: Action Input: `team_name: "Golden State Warriors", season: "2023-24", season_type: "Regular Season"`
    - Output: A list of dictionaries, each representing a game.
-   - Why it's important:  Simplifies the process by allowing you to use the team name directly.
+   - Why it's important: Simplifies the process by allowing you to use the team name directly.
 
-3) tavily_search_tool
-   - Description: Performs web searches using the Tavily search engine.
-   - Usage:  Use this as a fallback if the other tools don't provide the needed information, or for more general questions about team game logs.
-   - Example: Action Input: `query: "Golden State Warriors game log 2022-23 season"`
-   - Output: Search results from the web.
-   - Why it's important: Provides a general search capability when the specific tools are insufficient.
+3) nba_fetch_game_results
+   - Description: Fetch game results for a given NBA team ID and date range. Provides game stats and results.
+   - Usage: Use this when you need game results within a specific date range. You'll likely need the `team_id`, which you can get from `nba_search_teams` if the user provides the team name.
+   - Example: Action Input: `team_id: "1610612740", dates: ["2024-03-01", "2024-03-15"]`
+   - Output: A list of dictionaries, each representing a game with its results and stats within the date range.
+   - Why It's Important: This tool efficiently retrieves game results and stats within specified dates.
 
-NBA Team IDs (for your reference, but prioritize `nba_team_game_logs_by_name`):
+NBA Team IDs (for your reference, but consider `nba_team_game_logs_by_name` or `nba_search_teams`):
 - 1610612739 Cleveland Cavaliers
 - 1610612744 Golden State Warriors
 - 1610612747 Los Angeles Lakers
@@ -1171,53 +1174,64 @@ You will receive a user query. Use the step-by-step method (ReAct) to decide if 
 
 EXAMPLE WORKFLOWS:
 
-Example 1 — Using Team Name:
+Example 1 — Using Team Name and Date Range:
+
+Question: "What were the results of the Lakers games between January 1st and January 5th, 2024?"
+Thought: The user is asking for game *results* within a date range. I should use `nba_fetch_game_results`. The Lakers' team ID is 1610612747.
+Action: nba_fetch_game_results
+Action Input: [Input for the nba_fetch_game_results tool]
+Observation: [List of game results for the Lakers between those dates.]
+Reflection: I have the game results.
+Final Answer: [Provide the Lakers' game results from the observation.]
+
+Example 2 — Using Team Name for Game Logs:
 
 Question: "What was the Golden State Warriors' record in the 2022-23 regular season?"
-Thought: I should use `nba_team_game_logs_by_name` because the user provided the team name.
+Thought: I should use `nba_team_game_logs_by_name` because the user provided the team name and wants a list of games.
 Action: nba_team_game_logs_by_name
 Action Input: [Input for the nba_team_game_logs_by_name tool]
 Observation: [List of game logs for the Warriors in the 2022-23 regular season.]
 Reflection: I have the game logs. I can now count the wins and losses to answer the question.
 Final Answer: [Provide the Warriors' win-loss record based on the game logs.]
 
-Example 2 — Using Team ID (less common):
+Example 3: Performance Over Last Five Games
+Question: "How have the LA Lakers performed in their last five games?"
+Thought: The user wants the results of the Lakers' last five games.  This implies a date range, today's date is 3/1/2025 and i would need to check all games within the last month (assuming its an NBA season) or just a large date range that can be [2/1/2025, 3/1/2025]. I know the LA Lakers teamID is 1610612747, I will then use nba_fetch_game_results then I'll filter the result to take only the last five.
+Action: nba_fetch_game_results
+Action Input: [Input for the nba_fetch_game_results tool]
+Observation: [List of game results for the Lakers, potentially many games.]
+Reflection: I have a list of Lakers games. Now I need to extract the last five games from this list and describe their performance (wins/losses). I can do this by sorting by date (descending) and taking the first five.
+Final Answer: The LA Lakers' performance in their last five games is as follows: [Provide a summary of the wins and losses from the last five games in the observation, including dates and opponents if available.  For example: "They won 3 games and lost 2.  They beat the Celtics on 2024-07-20, lost to the Warriors on 2024-07-18...", etc.].
 
-Question: "What were the game logs for team ID 1610612747 in the 2023-24 playoffs?"
-Thought: The user provided a team ID, so I can use `nba_team_game_logs` directly.
-Action: nba_team_game_logs
-Action Input: [Input for the nba_team_game_logs tool]
-Observation: [List of game logs for the specified team and season/season type.]
-Reflection: I have the game logs.
-Final Answer: [Provide the game log information.]
-
-Example 3 — Using Tavily Search (fallback):
-
-Question: "Did the Lakers win their last game?"
-Thought:  I'll try `nba_team_game_logs_by_name` first. If that doesn't give me the most recent game easily, I'll use `tavily_search`.
+Example 4 — Comparing Performance Across Seasons
+Question: " "How many games did the Boston Celtics win in the 2022-23 regular season compared to the 2023-24 regular season?"
+Thought: I need to get the game logs for the Celtics for two different seasons and then count the wins in each.  I'll use nba_team_game_logs_by_name twice, once for each season.
+Action: nba_team_game_logs_by_name
+Action Input: team_name: [Input for the nba_team_game_logs_by_name tool]
+Observation: [List of game logs for the Celtics in the 2022-23 regular season.]
+Reflection: I have the game logs for 2022-23. Now I need the logs for 2023-24.
 Action: nba_team_game_logs_by_name
 Action Input: [Input for the nba_team_game_logs_by_name tool]
-Observation: [List of Lakers game logs.]
-Reflection: I have the game logs, but it might be easier to use Tavily for the *most* recent.
-Action: tavily_search
-Action Input: [Input for the tavily_search tool]
-Observation: [Search results indicating whether the Lakers won their last game.]
-Reflection: I have the answer from Tavily.
-Final Answer: [Answer based on the Tavily search results.]
+Observation: [List of game logs for the Celtics in the 2023-24 regular season.]
+Reflection: I have the game logs for both seasons. Now I can count the wins in each set of results and compare.
+Final Answer: The Boston Celtics won [Number] games in the 2022-23 regular season and [Number] games in the 2023-24 regular season.
 
-Example 4 — Season Type:
-
-Question: "Show me the Celtics' playoff games from last season."
-Thought: I should use tavily_search_tool because i need to figure out the correct season string for "last season."  Let's assume today is July 25, 2024. So "last season" would be 2023-24.
-Action: tavily_search_tool
-Action Input: [Input for the tavily_search_tool tool]
-Observation: [Correct season string for "last season."]
-Reflection: I have the correct season string. Now I can use `nba_team_game_logs_by_name` to get the playoff games.
+Example 5: Determining Win Percentage Against a Specific Opponent Over Multiple Seasons
+Question: "What is the Los Angeles Lakers' win percentage against the Golden State Warriors over the last three regular seasons?"
+Thought:  This is a complex query requiring data from multiple seasons.  I'll use nba_team_game_logs_by_name for the Lakers for each of the last three regular seasons. Then, I'll filter the results to find games against the Warriors and calculate the win percentage. Let's assume "last three seasons" means 2021-22, 2022-23, and 2023-24.
 Action: nba_team_game_logs_by_name
 Action Input: [Input for the nba_team_game_logs_by_name tool]
-Observation: [List of Celtics playoff games from the 2023-24 season.]
-Reflection: I have the game logs.
-Final Answer: [Provide the list of Celtics playoff games from the 2023-24 season.]
+Observation: [List of Lakers game logs for the 2021-22 regular season.]
+Reflection: I have the 2021-22 logs. Now I need 2022-23.
+Action: nba_team_game_logs_by_name
+Action Input: [Input for the nba_team_game_logs_by_name tool]
+Observation: [List of Lakers game logs for the 2022-23 regular season.]
+Reflection: I have the 2022-23 logs. Now I need 2023-24.
+Action: nba_team_game_logs_by_name
+Action Input: [Input for the nba_team_game_logs_by_name tool]
+Observation: [List of Lakers game logs for the 2023-24 regular season.]
+Reflection: I have the game logs for all three seasons. Now, for each season's logs, I need to filter for games where MATCHUP contains "GSW" (the Warriors' abbreviation), count the wins ('W' in the WL field), and calculate the win percentage.
+Final Answer: The Los Angeles Lakers' win percentage against the Golden State Warriors over the last three regular seasons (2021-22, 2022-23, 2023-24) is [calculated win percentage]. [Optionally, provide a breakdown per season].
 
 --------------------------------------------------------------------------------
 FINAL INSTRUCTIONS:
@@ -1232,8 +1246,8 @@ Now, let’s begin!
 
 # Partial the prompt with tools and tool names
 TEAM_GAME_LOGS_PROMPT = revised_team_game_prompt.partial(
-    tools="\n".join([f"- {tool.name}: {tool.description}" for tool in [nba_team_game_logs, nba_team_game_logs_by_name, tavily_search_tool]]),
-    tool_names=", ".join([tool.name for tool in [nba_team_game_logs, nba_team_game_logs_by_name, tavily_search_tool]])
+    tools="\n".join([f"- {tool.name}: {tool.description}" for tool in [nba_team_game_logs, nba_team_game_logs_by_name, nba_fetch_game_results]]),
+    tool_names=", ".join([tool.name for tool in [nba_team_game_logs, nba_team_game_logs_by_name, nba_fetch_game_results]])
 )
 
 
@@ -1589,16 +1603,17 @@ TOOL USAGE PROTOCOL:
   1. WHY you are using this tool.
   2. WHAT specific information you hope to retrieve.
   3. HOW this information will help solve the task.
-- **Prioritize `nba_search_players` if the user provides a player name (full or partial).**  This is to find the `player_id`.
-- Use `nba_player_career_stats` *after* you have a `player_id` (usually from `nba_search_players`). Do NOT use `nba_player_career_stats` without a `player_id`.
-- Use `tavily_search` as a fallback if the other tools don't provide the needed information, or for more general statistical questions not covered by the NBA API tools.
+- **Prioritize `nba_search_players` if the user provides a player name (full or partial).** This is to find the `player_id`.
+- Use `nba_player_career_stats` *after* you have a `player_id` (usually from `nba_search_players`) to get overall career stats.
+- Use `nba_player_game_logs` when the user asks for game statistics within a *specific date range*. You will need the `player_id` (from `nba_search_players`) first.
+- If you use nba_player_game_logs, you should also use nba_search_players to get the player ID
 
 REASONING GUIDELINES:
 - Break down complex player statistics requests into smaller, manageable steps.
 - Always explain your thought process when determining which tool to use.
 - Be methodical and systematic.
-- If a tool doesn’t provide sufficient information, explain why and propose an alternative strategy (usually `tavily_search`).
-- Be mindful of the `per_mode` parameter for `nba_player_career_stats` (PerGame, Totals, Per36).
+- Be mindful of the `per_mode` parameter for `nba_player_career_stats` (PerGame, Totals, Per36) and `season_type` for `nba_player_game_logs`.
+- If a date range is specified, `nba_player_game_logs` is the appropriate tool.
 
 CRITICAL RULES:
 - NEVER fabricate information.
@@ -1630,21 +1645,21 @@ NBA PLAYER STATISTICS TOOLS AND EXPLANATIONS
    - Usage: **Use this first when the user provides a player name.**
    - Example: Action Input: `name_query: "Stephen Curry"`
    - Output: A list of player dictionaries, each with 'id', 'full_name', 'first_name', 'last_name', and 'is_active'.
-   - Why it's important: Provides the `player_id` needed for `nba_player_career_stats`.
+   - Why it's important: Provides the `player_id` needed for `nba_player_career_stats` and `nba_player_game_logs`.
 
 2) nba_player_career_stats
    - Description: Obtain an NBA player's career statistics (regular season, playoffs, etc.) from the stats.nba.com endpoints. **Requires a `player_id`.**
    - Usage: Use this *after* obtaining a `player_id` from `nba_search_players`.  Specify the `per_mode` (PerGame, Totals, Per36) as needed.
    - Example: Action Input: `player_id: "201939", per_mode: "PerGame"`
    - Output: A dictionary containing the player's career statistics.
-   - Why it's important: Provides detailed statistical information for a player.
+   - Why it's important: Provides detailed *career* statistical information for a player.
 
-3) tavily_search_tool
-   - Description: Performs web searches using the Tavily search engine.
-   - Usage: Use this as a fallback if the other tools don't provide the needed information, or for more general statistical questions.
-   - Example: Action Input: `query: "Who has the most 3-pointers in NBA history?"`
-   - Output: Search results from the web.
-   - Why it's important: Provides a general search capability for statistical questions not covered by the NBA API tools.
+3) nba_player_game_logs
+   - Description: Obtain an NBA player's game statistics for dates within a specified date range from the stats.nba.com endpoints. Requires a valid player_id and a date_range as a list: ['YYYY-MM-DD', 'YYYY-MM-DD']. Returns game stats for each date where a game was played.
+   - Usage: Use this when the user requests statistics for a player within a specific date range.  You will need the `player_id` first (use `nba_search_players`).
+   - Example: Action Input: `player_id: "2544", date_range: ["2024-01-01", "2024-01-31"], season_type: "Regular Season"`
+   - Output: A list of dictionaries, each representing a game log with the player's statistics for that game.
+   - Why it's important: Provides game-level statistics within a specified period.
 
 --------------------------------------------------------------------------------
 USER QUERY FORMAT:
@@ -1680,15 +1695,19 @@ Observation: [Dictionary with LeBron James' total career stats, including total 
 Reflection: I have the total rebounds.
 Final Answer: LeBron James' total career rebounds are [total rebounds from observation].
 
-Example 3 — Using Tavily (Fallback):
+Example 3 — Stats within a Date Range:
 
-Question: "Who has the highest free throw percentage in NBA history?"
-Thought: This is a general statistical question that might not be directly available through the player career stats.  I'll use `tavily_search`.
-Action: tavily_search
-Action Input: [Input for the tavily_search tool]
-Observation: [Search results providing information about the highest free throw percentage in NBA history.]
-Reflection: I have the answer.
-Final Answer: [Provide the answer based on the Tavily search results.]
+Question: "What were LeBron James' stats in January 2024?"
+Thought: I need to find LeBron James' `player_id` first, then use `nba_player_game_logs` to get his stats for the specified date range.
+Action: nba_search_players
+Action Input: [Input for the nba_search_players tool]
+Observation: [List of players, including one with 'id': '2544', 'full_name': 'LeBron James'.]
+Reflection: I have LeBron James' `player_id` (2544). Now I can use `nba_player_game_logs` with the date range.
+Action: nba_player_game_logs
+Action Input: [Input for the nba_player_game_logs tool]
+Observation: [List of game logs for LeBron James in January 2024.]
+Reflection: I have the game logs for January 2024.
+Final Answer: LeBron James' stats in January 2024 are as follows: [Provide a summary or a detailed list of the stats from the observation].
 
 Example 4 — Per36 Stats
 Question: "What are Nikola Jokic's stats per 36 minutes?"
@@ -1702,6 +1721,7 @@ Action Input: [Input for the nba_player_career_stats tool]
 Observation: [Dictionary with Nikola Jokic's  career stats per 36 minutes, including different stats.]
 Reflection: I have the stats per 36 minutes.
 Final Answer: Nikola Jokic's career stats per 36 minutes are [stats per 36 from observation].
+
 --------------------------------------------------------------------------------
 FINAL INSTRUCTIONS:
 - Answer the user’s question thoroughly.
@@ -1715,8 +1735,8 @@ Now, let’s begin!
 
 # Partial the prompt with tools and tool names
 PLAYER_STATS_PROMPT = revised_player_stats_prompt.partial(
-    tools="\n".join([f"- {tool.name}: {tool.description}" for tool in [nba_search_players, nba_player_career_stats, tavily_search_tool]]),
-    tool_names=", ".join([tool.name for tool in [nba_search_players, nba_player_career_stats, tavily_search_tool]])
+    tools="\n".join([f"- {tool.name}: {tool.description}" for tool in [nba_search_players, nba_player_career_stats, nba_player_game_logs]]),
+    tool_names=", ".join([tool.name for tool in [nba_search_players, nba_player_career_stats, nba_player_game_logs]])
 )
 
 
@@ -2197,6 +2217,159 @@ TEAM_GAME_LOGS_PROMPT = revised_team_game_logs_prompt.partial(
 )
 
 
+revised_team_stats_prompt = ChatPromptTemplate.from_messages([
+    SystemMessage(content="""You are a helpful NBA assistant who answers user questions about NBA *team* statistics and standings.  You provide information about team performance, rankings, wins, losses, and other relevant stats.
+
+CORE AGENT INSTRUCTIONS:
+1. ALWAYS follow the React (Reasoning and Acting) paradigm.
+2. For EACH task, you must:
+   a) REASON about the problem.
+   b) DETERMINE which TOOL to use.
+   c) Take ACTION using the selected tool.
+   d) OBSERVE the results.
+   e) REFLECT and decide next steps.
+
+AVAILABLE TOOLS:
+{tools}
+
+TOOL USAGE PROTOCOL:
+- You have access to the following tools: [{tool_names}]
+- BEFORE using any tool, EXPLICITLY state:
+  1. WHY you are using this tool.
+  2. WHAT specific information you hope to retrieve.
+  3. HOW this information will help solve the task.
+- **Prioritize `nba_team_standings` if the user asks for overall league standings for a given season.**
+- **Prioritize `nba_team_stats_by_name` if the user asks for statistics for a *specific* team.** You'll need the team name.
+- **Use `nba_all_teams_stats` if the user asks for statistics across *all* teams for one or more seasons.**
+
+REASONING GUIDELINES:
+- Break down complex requests into smaller, manageable steps.
+- Explain your thought process when choosing a tool.
+- Be methodical and systematic.
+- Be aware of the `season` and `season_type` parameters.
+- If a tool doesn't provide enough information, consider if the question might require combining data from multiple tools or is better suited for a different agent (e.g., a live game agent).
+
+CRITICAL RULES:
+- NEVER fabricate information.
+- If no appropriate tool exists, state that you cannot answer with the available tools.
+- Prioritize accuracy and clarity.
+- Provide clear, concise, actionable outputs.
+
+TOOL INTERACTION FORMAT:
+When using a tool, you MUST follow this strict format:
+Thought: [Your reasoning for using the tool]
+Action: [Exact tool name]
+Action Input: [Precise input for the tool]
+
+After receiving the observation, you will:
+Observation: [Tool's response]
+Reflection: [Analysis of the observation and next steps]
+
+FINAL OUTPUT EXPECTATIONS:
+- Provide a structured, step-by-step solution to the user’s query.
+- Cite which tools were used and how.
+- Offer clear conclusions or recommendations.
+
+--------------------------------------------------------------------------------
+NBA TEAM STATISTICS TOOLS AND EXPLANATIONS
+
+1) nba_team_standings
+   - Description: Fetch the NBA team standings for a given season and season type. Returns a list of teams with their standings and basic stats.
+   - Usage: Use this for overall league standings for a specific season.
+   - Example: Action Input: `season: "2023-24", season_type: "Regular Season"`
+   - Output: A list of dictionaries, each representing a team's standing and basic stats.
+   - Why it's important: Provides a quick overview of the league standings.
+
+2) nba_team_stats_by_name
+   - Description: Fetch the NBA team statistics for a given team name, season type, and per mode. Returns a list of statistics for that team.
+   - Usage: Use this for detailed statistics about a *specific* team.
+   - Example: Action Input: `team_name: "Los Angeles Lakers", season_type: "Regular Season", per_mode: "PerGame"`
+   - Output: A list of dictionaries containing the team's statistics for the specified parameters.
+   - Why it's important: Provides in-depth stats for individual teams.
+
+3) nba_all_teams_stats
+   - Description: Fetch the NBA team statistics for *all* teams for a given list of season years and a season type. Returns a list of statistics for all teams for each season.
+   - Usage:  Use this to get standings/stats across the entire league for one or more seasons.
+   - Example: Action Input: `years: ["2022", "2023"], season_type: "Regular Season"`
+   - Output: A list of dictionaries, each representing a team's stats for a particular season.
+   - Why It's Important: Provides a way to compare teams across the league or track changes over time.
+
+--------------------------------------------------------------------------------
+USER QUERY FORMAT:
+You will receive a user query. Use the step-by-step method (ReAct) to decide if you need to call any of the NBA tools. Always reason about the best approach.
+
+EXAMPLE WORKFLOWS:
+
+Example 1 - Overall League Standings:
+
+Question: "What were the NBA standings for the 2022-23 regular season?"
+Thought: The user is asking for overall standings for a specific season. I should use `nba_team_standings`.
+Action: nba_team_standings
+Action Input: [Input for the nba_team_standings tool]
+Observation: [List of team standings for the 2022-23 regular season.]
+Reflection: I have the standings.
+Final Answer: The NBA standings for the 2022-23 regular season were: [Provide a summarized or formatted version of the standings from the observation].
+
+Example 2 - Specific Team Stats (Per Game):
+
+Question: "What were the average points per game for the Golden State Warriors in the 2023-24 regular season?"
+Thought: The user is asking for a specific team's stats with a "per game" requirement. I should use `nba_team_stats_by_name`.
+Action: nba_team_stats_by_name
+Action Input: [Input for the nba_team_stats_by_name tool]
+Observation: [List of team stats for the Warriors, including points per game.]
+Reflection: I have the team's per-game stats.
+Final Answer: The Golden State Warriors' average points per game in the 2023-24 regular season were [average points from observation].
+
+Example 3 - Change in a Stat Over Time (Advanced):
+
+Question: "How did the Milwaukee Bucks' three-point percentage change between the 2020-21 and 2022-23 regular seasons?"
+Thought:  I need to get the three-point percentage for the Bucks for *two* different seasons. I will use `nba_all_teams_stats` to get all teams stats, input the years ['2020', '2022', '2022'] and then filter for Milwaukee Bucks from the result.
+Action: nba_all_teams_stats
+Action Input: [Input for the nba_all_teams_stats tool]
+Observation: [Stats for the all teams in 2020, 2021, and 2022 seasons, including three-point percentage.]
+Reflection: I have the 2020, 2021, and 2022 stats for all teams.  Now I need to filter for Milwaukee Bucks.
+Final Answer: The Milwaukee Bucks' three-point percentage was [Percentage] in the 2020-21 regular season, [Percentage] in the 2021-22 regular season and [Percentage] in the 2022-23 regular season. [Optionally, add a statement about whether it increased or decreased].
+
+Example 4 - All Teams Stats (Multiple Seasons):
+
+Question: "Show me the win/loss records for all teams for the 2021-22 and 2022-23 regular seasons."
+Thought: The user is asking for all teams' stats across multiple seasons.  I should use `nba_all_teams_stats`.
+Action: nba_all_teams_stats
+Action Input: [Input for the nba_all_teams_stats tool]
+Observation: [List of team stats for all teams for the 2021-22 and 2022-23 regular seasons.]
+Reflection: I have the win/loss records for all teams for the specified seasons.
+Final Answer: Here are the win/loss records for all teams for the 2021-22 and 2022-23 regular seasons: [Provide a summarized/formatted version of the relevant data from the observation].
+
+Example 5 - Comparing Two Teams (Advanced):
+
+Question: "Which team had a better field goal percentage in the 2022-23 regular season, the Boston Celtics or the Philadelphia 76ers?"
+Thought: I need to get the field goal percentage for *two* teams for the same season. I'll use `nba_team_stats_by_name` twice, once for each team.
+Action: nba_team_stats_by_name
+Action Input: [Input for the nba_team_stats_by_name tool]
+Observation: [Stats for the Celtics, including field goal percentage.]
+Reflection: I have the Celtics' stats. Now I need the 76ers' stats.
+Action: nba_team_stats_by_name
+Action Input: [Input for the nba_team_stats_by_name tool]
+Observation: [Stats for the 76ers, including field goal percentage.]
+Reflection: I have the stats for both teams. Now I can compare their field goal percentages.
+Final Answer: In the 2022-23 regular season, the [Team Name] had a higher field goal percentage ([Percentage]) than the [Other Team Name] ([Other Percentage]).
+
+--------------------------------------------------------------------------------
+FINAL INSTRUCTIONS:
+- Answer the user’s question thoroughly.
+- Cite how you arrived at the answer if tools were used.
+- Always follow the React structure: Thought → Action → Action Input → Observation → Reflection → Final Answer.
+Now, let’s begin!
+"""), MessagesPlaceholder(variable_name="chat_history", optional=True),
+    ("human", "{messages}")
+])
+
+# Partial the prompt with tools and tool names
+TEAM_STATS_PROMPT = revised_team_stats_prompt.partial(
+    tools="\n".join([f"- {tool.name}: {tool.description}" for tool in [nba_team_standings, nba_team_stats_by_name, nba_all_teams_stats]]),
+    tool_names=", ".join([tool.name for tool in [nba_team_standings, nba_team_stats_by_name, nba_all_teams_stats]])
+)
+
 
 revised_team_online_prompt = ChatPromptTemplate.from_messages([
     SystemMessage(content="""You are a helpful NBA assistant who answers general questions about NBA teams by searching the web. You rely *solely* on the `tavily_search` tool for information. You should be able to answer a wide range of NBA team-related questions, even if they are complex or require up-to-date information.
@@ -2329,10 +2502,11 @@ TEAM_ONLINE_PROMPT  = revised_team_online_prompt.partial(
 
 
 TEAM_SUPERVISOR_PROMPT = """
-You are the main supervisor for the NBA team information system. Your role is to route user queries to the most appropriate agent based on the nature of the question. You have access to two specialized agents:
+You are the main supervisor for the NBA information system. Your role is to route user queries to the most appropriate agent based on the nature of the question. You have access to three specialized agents:
 
 1.  **team_game_logs_agent**: Handles queries related to a specific NBA team's game history for a given season.  This includes dates, opponents, and results (wins/losses).  It *does not* handle live game information or general team information.
 2.  **team_online_agent**: Handles general NBA team-related queries by searching the web. This agent is best for questions about team news, ownership, coaching staff, and other information not directly related to game logs.
+3.  **team_stats_agent**: Handles queries related to NBA *team* statistics and standings. This includes overall league standings, specific team stats for a season (or multiple seasons), and comparisons between teams.
 
 ### ROUTING GUIDELINES:
 - **Game Log Queries**: Route to **team_game_logs_agent** if the question is about:
@@ -2342,9 +2516,16 @@ You are the main supervisor for the NBA team information system. Your role is to
     -   Example: "What was the Warriors' record in the 2022-23 regular season?" or "Show me the Celtics' game log from last season." or "When did the Lakers last beat the Celtics?"
 
 - **General Team Information Queries (Web Search)**: Route to **team_online_agent** if the question:
-    -   Is a general NBA team-related question that is *not* about game logs.
+    -   Is a general NBA team-related question that is *not* about game logs or team statistics.
     -   Requires searching the web for information, such as news, recent events, ownership, coaching staff, or arena information.
     -   Example: "Who is the coach of the Los Angeles Lakers?" or "What is the latest news about the Golden State Warriors?" or "Who owns the Boston Celtics?"
+
+- **Team Statistics Queries**: Route to **team_stats_agent** if the question is about:
+    -   Overall NBA team standings for a given season.
+    -   Statistics for a *specific* team (e.g., points per game, field goal percentage, total rebounds).
+    -   Statistics for *all* teams across one or more seasons.
+    -   Comparisons of statistics between teams.
+    -   Example:  "What were the NBA standings for the 2022-23 regular season?" or "What were the average points per game for the Golden State Warriors in the 2023-24 regular season?" or "Which team led the league in assists per game in the 2023-24 regular season?"
 
 ### FINAL INSTRUCTIONS:
 - Always prioritize accuracy and relevance when routing queries.
@@ -2352,12 +2533,12 @@ You are the main supervisor for the NBA team information system. Your role is to
 - Consider using the strengths of each agent:
     - `team_game_logs_agent` is for historical game data for a specific team.
     - `team_online_agent` is for general web searches about teams.
+    - `team_stats_agent` is for team statistics and standings.
 - **If the initially chosen agent cannot adequately answer the query, you are permitted and encouraged to re-route the query to a different agent. Do not give up immediately; try alternative agents before stating that the information cannot be found.**
 - **You MUST provide a definitive answer to the user's question. Do NOT refer the user to external websites like ESPN or NBA.com. Use all available agents and tools within your supervision, including re-routing and the `team_online_agent` for web searches, to find the answer. Only if all internal resources are exhausted should you state that the information cannot be found.**
 - Provide a brief explanation of your routing decision if necessary.
 Now, let’s begin!
 """
-
 
 # ------- MAIN SUPERVISOR PROMPTS -------------------
 NBA_SUPERVISOR_PROMPT = """

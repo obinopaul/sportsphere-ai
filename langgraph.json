@@ -1,7 +1,9 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/react_agent/graph.py:graph"
+    "app_mlb": "./app/react_agent/mlb/graph.py:app_mlb",
+    "app_nba": "./app/react_agent/nba/graph.py:app_nba",
+    "app_soccer": "./app/react_agent/soccer/graph.py:app_soccer"
   },
   "env": ".env"
 }

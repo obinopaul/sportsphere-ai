@@ -1742,30 +1742,99 @@ get_league_id_by_name = StructuredTool(
 
 
 ###############################################################################
+# 1) get_all_leagues_id: Retrieve All Football Leagues with IDs
+###############################################################################
+
+class GetAllLeaguesInput(BaseModel):
+    """
+    Input schema for retrieving all football leagues with an optional filter for multiple countries.
+    """
+    country: Optional[List[str]] = Field(
+        default=None,
+        description="List of countries to filter by (e.g., ['England', 'Spain']). Use ['all'] to retrieve leagues from all countries."
+    )
+
+class GetAllLeaguesTool:
+    """
+    Retrieves a list of all football leagues with their corresponding league IDs,
+    optionally filtered by one or more countries.
+    Endpoint: GET /leagues
+    Docs: https://www.api-football.com/documentation-v3#operation/get-leagues
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api-football-v1.p.rapidapi.com/v3"
+
+    def get_all_leagues(self, country: Optional[List[str]] = None) -> Dict[str, Any]:
+        headers = {
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+            "x-rapidapi-key": self.api_key
+        }
+
+        try:
+            # Fetch all leagues
+            leagues_url = f"{self.base_url}/leagues"
+            response = requests.get(leagues_url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract league names and IDs
+            leagues = {}
+            for league_info in data.get("response", []):
+                league_name = league_info["league"]["name"]
+                league_id = league_info["league"]["id"]
+                league_country = league_info["country"]["name"]
+
+                # Apply filters
+                if country and "all" not in country:
+                    if league_country.lower() not in [c.lower() for c in country]:
+                        continue
+
+                leagues[league_name] = {
+                    "league_id": league_id,
+                    "country": league_country
+                }
+
+            return {"leagues": leagues}
+
+        except Exception as e:
+            return {"error": str(e)}
+
+# Define the tool
+get_all_leagues_id = StructuredTool(
+    name="get_all_leagues_id",
+    description="Retrieve a list of all football leagues with IDs, and an optional filter for one or multiple countries.",
+    func=GetAllLeaguesTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_all_leagues,
+    args_schema=GetAllLeaguesInput
+)
+
+###############################################################################
 # 1) GetStandingsTool: Retrieve League/Team Standings
 ###############################################################################
 
 class GetStandingsToolInput(BaseModel):
     """
     Input schema for retrieving league/team standings.
-    'season' is required by the API. 'league' or 'team' can be used.
+    'season' is a list of years, and 'league_id' is now a list of league IDs.
     """
-    league_id: Optional[int] = Field(
+    league_id: Optional[List[int]] = Field(
         default=None,
-        description="League ID to retrieve standings for."
+        description="List of League IDs to retrieve standings for (e.g., [2, 39] for La Liga & Premier League)."
     )
-    season: int = Field(
-        ...,
-        description="(REQUIRED) 4-digit season (e.g. 2021)."
+    season: List[int] = Field(
+        ..., 
+        description="(REQUIRED) List of 4-digit seasons (e.g. [2021] or [2021, 2022, 2023])."
     )
     team: Optional[int] = Field(
         default=None,
-        description="Optionally retrieve standings for a specific team ID within that league/season."
+        description="Optionally retrieve standings for a specific team ID within the leagues/seasons."
     )
 
 class GetStandingsTool:
     """
-    Retrieves standings for a league or for a specific team in that league.
+    Retrieves standings for multiple leagues or a specific team in those leagues.
+    Supports multiple seasons.
     Endpoint: GET /standings
     Docs: https://www.api-football.com/documentation-v3#operation/get-standings
     """
@@ -1776,39 +1845,46 @@ class GetStandingsTool:
 
     def get_standings(
         self,
-        league_id: Optional[int],
-        season: int,
+        league_id: Optional[List[int]],
+        season: List[int],
         team: Optional[int]
     ) -> Dict[str, Any]:
-        url = f"{self.base_url}/standings"
         headers = {
-            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",  # RapidAPI host
-            "x-rapidapi-key": self.api_key                         # RapidAPI key
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",  
+            "x-rapidapi-key": self.api_key  
         }
-        params = {"season": season}
 
-        if league_id is not None:
-            params["league"] = league_id
-        if team is not None:
-            params["team"] = team
+        results = {}
+        leagues = league_id if league_id else []  # Handle None case
 
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            return {"error": str(e)}
+        for league in leagues:
+            results[league] = {}  # Store results by league
+            for year in season:
+                url = f"{self.base_url}/standings"
+                params = {"season": year, "league": league}
 
+                if team is not None:
+                    params["team"] = team
+
+                try:
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                    response.raise_for_status()
+                    results[league][year] = response.json()  # Store results per league & season
+                except Exception as e:
+                    results[league][year] = {"error": str(e)}
+
+        return results  # Dictionary with league_id as keys and nested seasons
+
+# Structured tool integration
 get_standings = StructuredTool(
     name="get_standings",
     description=(
-        "Use this tool to retrieve the standings table of a league and season, "
+        "Retrieve the standings table for multiple leagues and multiple seasons, "
         "optionally filtered by a team ID."
     ),
     func=GetStandingsTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_standings,
     args_schema=GetStandingsToolInput
 )
-
 
 
 ###############################################################################
@@ -2629,15 +2705,15 @@ import requests
 
 class GetLeagueScheduleByDateInput(BaseModel):
     league_name: str = Field(
-        ...,
+        ..., 
         description="Name of the league (e.g. 'Premier League', 'La Liga')."
     )
-    date: str = Field(
-        ...,
-        description="Date in YYYY-MM-DD format (e.g. '2023-08-10')."
+    date: List[str] = Field(
+        ..., 
+        description="List of dates in YYYY-MM-DD format (e.g. ['2025-03-09'] or ['2025-03-09', '2025-03-10'])."
     )
     season: str = Field(
-        default="2024",
+        default="2024", 
         description="Season in YYYY format (e.g. '2024')."
     )
 
@@ -2645,41 +2721,49 @@ class GetLeagueScheduleByDateTool:
     """
     1. Search for the league ID via /leagues?search=league_name
     2. Use the found ID to call /fixtures?league={id}&date={YYYY-MM-DD}&season={season}
-    3. Return JSON of the fixtures (the schedule for that day).
+    3. Return JSON of the fixtures (the schedule for those days), supporting multiple dates.
     """
 
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api-football-v1.p.rapidapi.com/v3"
 
-    def get_league_schedule(self, league_name: str, date: str, season: str) -> Dict[str, Any]:
+    def get_league_schedule(self, league_name: str, date: List[str], season: str) -> Dict[str, Any]:
         headers = {
-            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",  # RapidAPI host
-            "x-rapidapi-key": self.api_key                         # RapidAPI key
+            "x-rapidapi-host": "api-football-v1.p.rapidapi.com",  
+            "x-rapidapi-key": self.api_key  
         }
 
         # Step 1: Get league ID by searching name
         try:
             leagues_url = f"{self.base_url}/leagues"
-            leagues_params = {"search": league_name}  # You can adjust the season here
+            leagues_params = {"search": league_name}
             resp = requests.get(leagues_url, headers=headers, params=leagues_params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
+            
             if not data.get("response"):
                 return {"error": f"No leagues found matching '{league_name}'."}
-            
+
             # We'll just grab the first result
             league_id = data["response"][0]["league"]["id"]
-            # Step 2: Get fixtures for that league & date
-            fixtures_url = f"{self.base_url}/fixtures"
-            fixtures_params = {
-                "league": league_id,
-                "date": date,
-                "season": season  # Adding the season parameter
-            }
-            resp_fixtures = requests.get(fixtures_url, headers=headers, params=fixtures_params, timeout=15)
-            resp_fixtures.raise_for_status()
-            return resp_fixtures.json()
+            
+            results = {}
+            for match_date in date:
+                # Step 2: Get fixtures for that league & date
+                fixtures_url = f"{self.base_url}/fixtures"
+                fixtures_params = {
+                    "league": league_id,
+                    "date": match_date,  
+                    "season": season  
+                }
+                
+                resp_fixtures = requests.get(fixtures_url, headers=headers, params=fixtures_params, timeout=15)
+                resp_fixtures.raise_for_status()
+                
+                results[match_date] = resp_fixtures.json()  # Store results per date
+
+            return results  # Return structured results with dates as keys
 
         except Exception as e:
             return {"error": str(e)}
@@ -2688,8 +2772,8 @@ class GetLeagueScheduleByDateTool:
 get_league_schedule_by_date = StructuredTool(
     name="get_league_schedule_by_date",
     description=(
-        "Retrieve the schedule (fixtures) for a given league on a specified date. "
-        "Input the league name (e.g. 'Premier League') and a date (YYYY-MM-DD)."
+        "Retrieve the schedule (fixtures) for a given league on one or multiple specified dates. "
+        "Supports a single season."
     ),
     func=GetLeagueScheduleByDateTool(api_key=os.getenv("RAPID_API_KEY_FOOTBALL")).get_league_schedule,
     args_schema=GetLeagueScheduleByDateInput

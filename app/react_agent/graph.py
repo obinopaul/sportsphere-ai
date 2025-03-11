@@ -16,7 +16,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 
-from configuration import Configuration
+from app.react_agent.configuration import Configuration
 from app.react_agent.state import OverallState
 from langgraph.prebuilt import tools_condition
 from langgraph.prebuilt import ToolNode

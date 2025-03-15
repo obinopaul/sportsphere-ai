@@ -1,4 +1,6 @@
 {
+  "name": "Sports_AI",
+  "description": "A multi-agent built for sports",
   "dependencies": ["."],
   "graphs": {
     "app_mlb": "./app/react_agent/mlb/graph.py:app_mlb",

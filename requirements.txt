@@ -4,6 +4,7 @@ langchain_anthropic
 langchain_openai
 tavily_python
 langchain_community
+langchain-groq
 langgraph
 python-dotenv
 fastapi
@@ -18,3 +19,6 @@ aiohttp
 ipython
 primp==0.11.0
 nba_api
+python-mlb-statsapi
+langgraph-supervisor
+langchain-openai

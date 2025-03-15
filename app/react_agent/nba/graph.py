@@ -249,7 +249,7 @@ workflow.add_edge("split_query", "parallel_supervisors")
 workflow.add_edge("parallel_supervisors", "combine_results")
 workflow.add_edge("combine_results", END)
 
-app_nba = workflow.compile(name = "NBA_Workflow")
+app_nba = workflow.compile()
 
 
 

@@ -234,7 +234,6 @@ async def parallel_runner(state: AgentState, supervisor_dict: Dict[str, Any]) ->
     """Runs the appropriate supervisors in parallel for each sub-query."""
     tasks = []
     for sub_query_info in state["sub_queries"]:
-        print(f'Running sub-query: {sub_query_info["query"]}: {sub_query_info["supervisor"]}')
         # Pass the entire dictionary containing query AND supervisor
         updated_state = {**state, "current_query": sub_query_info}
         task = asyncio.create_task(run_supervisor(updated_state, supervisor_dict))
@@ -292,7 +291,7 @@ workflow.add_edge("split_query", "parallel_supervisors")
 workflow.add_edge("parallel_supervisors", "combine_results")
 workflow.add_edge("combine_results", END)
 
-app_soccer = workflow.compile(name = "SOCCER_Workflow")
+app_soccer = workflow.compile()
 
 
 # """Main entry point."""
